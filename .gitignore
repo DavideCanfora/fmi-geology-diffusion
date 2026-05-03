@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+
+# macOS
+.DS_Store
+
+# Data
+data/**/*.png
+data/**/*.jpg
+data/**/*.jpeg
+data/**/*.npy
+data/**/*.zip
+data/**/*.dlis
+data/**/*.las
+
+# Outputs / experiments
+repo_original/experiments/
+repo_original/**/tb_logger/
+repo_original/**/checkpoint/
+repo_original/**/*.pth
+repo_original/**/*.state
+
+# Logs
+logs/
+*.log
+
+# Cache
+.cache/
