@@ -16,6 +16,16 @@ def is_image_file(filename):
     return any(filename.endswith(extension) for extension in IMG_EXTENSIONS)
 
 def make_dataset(dir):
+    """
+    Build a list of image paths from either a directory or a file list.
+
+    If `dir` is a file, it is interpreted as a text file containing image paths.
+    If `dir` is a directory, all image files inside it are collected
+    recursively and sorted.
+
+    For the FMI experiments, `data_root` is usually a directory containing PNG
+    patches extracted from DLIS files.
+    """
     if os.path.isfile(dir):
         images = [i for i in np.genfromtxt(dir, dtype=np.str, encoding='utf-8')]
     else:
@@ -33,6 +43,20 @@ def pil_loader(path):
     return Image.open(path).convert('RGB')
 
 class InpaintDataset(data.Dataset):
+    """
+    Generic inpainting dataset used by the original Palette repository.
+
+    It loads RGB images, resizes and normalizes them to [-1, 1], generates an
+    artificial mask, and returns the ground-truth image together with a
+    conditional image where the masked region is replaced by Gaussian noise.
+
+    Returned fields:
+        gt_image   : original image used as reconstruction target
+        cond_image : conditional input, with masked pixels replaced by noise
+        mask_image : visualization image, with masked pixels set to white
+        mask       : binary inpainting mask, where 1 indicates the hole
+        path       : image filename
+    """
     def __init__(self, data_root, mask_config={}, data_len=-1, image_size=[256, 256], loader=pil_loader):
         imgs = make_dataset(data_root)
         if data_len > 0:
@@ -178,12 +202,25 @@ class ColorizationDataset(data.Dataset):
 
 class FMIInpaintDataset(InpaintDataset):
     """
-    FMI-specific inpainting dataset.
+    FMI-aware inpainting dataset.
 
-    Difference from InpaintDataset:
-    - original FMI images already contain black vertical bands / gaps;
-    - artificial training masks must avoid those already-missing regions;
-    - mask is restricted to pixels that are valid in the original image.
+    FMI borehole images often contain real missing regions, visible as black
+    vertical bands caused by incomplete pad coverage or invalid measurements.
+    These real gaps should not be treated as artificial training targets.
+
+    This dataset extends the generic InpaintDataset by:
+    1. detecting the valid FMI support region from non-black pixels;
+    2. generating a standard artificial inpainting mask;
+    3. intersecting the artificial mask with the valid support region;
+    4. producing a conditional image only where valid pixels were deliberately
+       hidden.
+
+    In this way, the model is trained to reconstruct deliberately removed FMI
+    information, not regions where the original acquisition already contains no
+    signal.
+
+    Additional returned field:
+        valid_region : binary map of non-black FMI support pixels.
     """
 
     def __init__(
@@ -205,6 +242,17 @@ class FMIInpaintDataset(InpaintDataset):
         self.black_threshold = black_threshold
 
     def get_valid_region(self, img):
+        """
+        Estimate the valid support of an FMI patch.
+
+        Images are normalized to [-1, 1]. Missing FMI areas are rendered as
+        black pixels, approximately equal to -1 in all channels. A pixel is
+        considered valid if at least one RGB channel is above black_threshold.
+
+        Returns:
+            Tensor of shape [1, H, W], with 1 for valid FMI pixels and 0 for
+            already-missing regions.
+        """
         # img is normalized in [-1, 1], shape [3, H, W]
         # black FMI gaps are close to -1 in all RGB channels.
         # valid_region shape: [1, H, W], values 0/1.
@@ -220,6 +268,9 @@ class FMIInpaintDataset(InpaintDataset):
         raw_mask = self.get_mask().float()
         valid_region = self.get_valid_region(img)
 
+        # Restrict artificial holes to valid FMI pixels. Real black bands
+        # remain visible as missing acquisition regions and are not used as
+        # artificial reconstruction targets.
         # final mask: only mask valid FMI pixels, never already-black gaps
         mask = raw_mask * valid_region
 

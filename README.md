@@ -62,3 +62,20 @@ Run debug completata:
 
 Interpretazione:
 questo non è ancora un esperimento scientifico, ma dimostra che Palette può essere adattato a FMI inpainting.
+
+## Palette FMI debug configuration
+
+The file `repo_original/config/inpainting_fmi16_debug.json` is a local smoke-test configuration, not a scientific training configuration.
+
+It verifies that:
+- `FMIInpaintDataset` loads FMI image patches correctly;
+- artificial masks are restricted to valid FMI pixels;
+- Palette runs locally on CPU with a very small UNet;
+- training, validation, checkpointing and image export work end-to-end.
+
+Serious training will require:
+- full FMI dataset paths on the HPC server;
+- GPU-enabled configuration;
+- larger network;
+- more diffusion timesteps;
+- FMI-specific masks, losses and metrics selected from literature.

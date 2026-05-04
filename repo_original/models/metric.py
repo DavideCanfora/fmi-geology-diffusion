@@ -9,7 +9,20 @@ from torchvision.models.inception import inception_v3
 import numpy as np
 from scipy.stats import entropy
 
+# Evaluation metrics used during validation/testing.
+#
+# The current configuration uses mae(), computed between the restored image and
+# the ground truth image. For FMI inpainting this is only a preliminary metric:
+# future evaluations should include masked and valid-region metrics so that the
+# score focuses on reconstructed FMI pixels rather than unchanged context.
+
 def mae(input, target):
+    """
+    Mean absolute error over the full image.
+
+    This is a generic metric. For FMI inpainting, a masked MAE restricted to
+    artificial holes and valid regions will be more informative.
+    """
     with torch.no_grad():
         loss = nn.L1Loss()
         output = loss(input, target)

@@ -10,8 +10,26 @@ from core.praser import init_obj
 
 
 def define_dataloader(logger, opt):
-    """ create train/test dataloader and validation dataloader,  validation dataloader is None when phase is test or not GPU 0 """
-    '''create dataset and set random seed'''
+    """
+    Build the PyTorch dataloaders for the current phase.
+
+    The dataset class is selected from the JSON configuration and instantiated
+    by define_dataset(). This function then wraps the resulting Dataset object
+    into a PyTorch DataLoader, optionally using a DistributedSampler when
+    multi-GPU training is enabled.
+
+    For the FMI experiments, the selected dataset is FMIInpaintDataset, which
+    returns dictionaries containing:
+        gt_image     : original FMI image
+        cond_image   : masked/noisy conditional input
+        mask_image   : visualization of the masked image
+        mask         : artificial inpainting mask
+        valid_region : non-black FMI support region
+        path         : image filename
+
+    The returned phase_loader is used by the training or testing loop.
+    The returned val_loader is used only during validation.
+    """
     dataloader_args = opt['datasets'][opt['phase']]['dataloader']['args']
     worker_init_fn = partial(Util.set_seed, gl_seed=opt['seed'])
 
@@ -35,7 +53,22 @@ def define_dataloader(logger, opt):
 
 
 def define_dataset(logger, opt):
-    ''' loading Dataset() class from given file's name '''
+    """
+    Instantiate the Dataset specified in the configuration and optionally split
+    it into train/validation subsets.
+
+    The actual Dataset class is not hard-coded here. It is dynamically loaded
+    through init_obj(), using the "which_dataset" field in the config.
+
+    Example for FMI:
+        "which_dataset": {
+            "name": ["data.dataset", "FMIInpaintDataset"],
+            "args": {...}
+        }
+
+    In debug mode, the dataset can be reduced to a small subset through
+    opt["debug"]["debug_split"], which is useful for smoke tests on local CPU.
+    """
     dataset_opt = opt['datasets'][opt['phase']]['which_dataset']
     phase_dataset = init_obj(dataset_opt, logger, default_file_name='data.dataset', init_type='Dataset')
     val_dataset = None
@@ -69,7 +102,11 @@ def define_dataset(logger, opt):
 
 def subset_split(dataset, lengths, generator):
     """
-    split a dataset into non-overlapping new datasets of given lengths. main code is from random_split function in pytorch
+    Split a Dataset into non-overlapping Subset objects.
+
+    This is used to create train and validation subsets from the same underlying
+    Dataset instance. The split is random but controlled by the provided
+    generator, so it can be reproducible when a fixed seed is used.
     """
     indices = randperm(sum(lengths), generator=generator).tolist()
     Subsets = []

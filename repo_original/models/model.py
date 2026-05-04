@@ -3,7 +3,27 @@ import tqdm
 from core.base_model import BaseModel
 from core.logger import LogTracker
 import copy
+
+# High-level Palette training wrapper.
+#
+# This file does not define the UNet architecture or the diffusion equations.
+# Instead, it wraps the network with:
+# - optimizer creation;
+# - checkpoint loading/saving;
+# - exponential moving average;
+# - train/validation/test loops;
+# - logging and image export.
+#
+# The actual diffusion forward loss is computed by models/network.py.
+
 class EMA():
+    """
+    Exponential Moving Average of model parameters.
+
+    During training, an EMA copy of the generator can be updated from the
+    current network weights. EMA weights are often more stable for sampling
+    in diffusion models.
+    """
     def __init__(self, beta=0.9999):
         super().__init__()
         self.beta = beta
@@ -18,7 +38,17 @@ class EMA():
 
 class Palette(BaseModel):
     def __init__(self, networks, losses, sample_num, task, optimizers, ema_scheduler=None, **kwargs):
-        ''' must to init BaseModel with kwargs '''
+        """
+        Initialize the Palette training wrapper.
+
+        This class receives already-created networks, losses, dataloaders,
+        metrics, logger and writer from the factory functions. It configures
+        the optimizer, optional EMA model, checkpoint loading, diffusion loss
+        and noise schedule.
+
+        For FMI inpainting, the training batch contains gt_image, cond_image
+        and mask produced by FMIInpaintDataset.
+        """
         super(Palette, self).__init__(**kwargs)
 
         ''' networks, dataloder, optimizers, losses, etc. '''
@@ -57,7 +87,20 @@ class Palette(BaseModel):
         self.task = task
         
     def set_input(self, data):
-        ''' must use set_device in tensor '''
+        """
+        Move a batch from the dataloader into model attributes.
+
+        Expected fields for inpainting:
+            cond_image : conditional masked/noisy image
+            gt_image   : target image
+            mask       : binary inpainting mask
+            mask_image : visualization image
+            path       : filename
+
+        FMIInpaintDataset also returns valid_region, but the current Palette
+        wrapper does not use it yet. It can be introduced later for
+        FMI-specific masked/valid-region losses.
+        """
         self.cond_image = self.set_device(data.get('cond_image'))
         self.gt_image = self.set_device(data.get('gt_image'))
         self.mask = self.set_device(data.get('mask'))
@@ -102,6 +145,19 @@ class Palette(BaseModel):
         return self.results_dict._asdict()
 
     def train_step(self):
+        """
+        Execute one training epoch over phase_loader.
+
+        For each batch:
+        1. load gt_image, cond_image and mask;
+        2. compute the diffusion training loss through self.netG(...);
+        3. backpropagate;
+        4. update network weights;
+        5. log scalar losses and visual examples;
+        6. update EMA weights if enabled.
+
+        The scalar loss is produced inside models/network.py.
+        """
         self.netG.train()
         self.train_metrics.reset()
         for train_data in tqdm.tqdm(self.phase_loader):
@@ -129,6 +185,14 @@ class Palette(BaseModel):
         return self.train_metrics.result()
     
     def val_step(self):
+        """
+        Run validation sampling/restoration.
+
+        Unlike train_step, validation does not optimize the network. It calls
+        self.netG.restoration(...) to generate completed images from the
+        conditional input and mask, computes metrics against gt_image, and
+        saves visual results.
+        """
         self.netG.eval()
         self.val_metrics.reset()
         with torch.no_grad():
@@ -162,6 +226,12 @@ class Palette(BaseModel):
         return self.val_metrics.result()
 
     def test(self):
+        """
+        Run test-time restoration over the selected phase dataset.
+
+        This follows the same restoration path as validation, but iterates over
+        phase_loader and writes final test metrics/results.
+        """
         self.netG.eval()
         self.test_metrics.reset()
         with torch.no_grad():

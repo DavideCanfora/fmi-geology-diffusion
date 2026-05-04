@@ -10,8 +10,33 @@ import core.util as Util
 from data import define_dataloader
 from models import create_model, define_network, define_loss, define_metric
 
+# Entry point for Palette training/testing.
+# This script does not implement the diffusion model itself.
+# Its role is to:
+# 1. parse the JSON configuration file;
+# 2. initialize device/distributed settings;
+# 3. build logger and visual writer;
+# 4. instantiate datasets and dataloaders;
+# 5. instantiate the diffusion network, losses and metrics;
+# 6. wrap everything inside the Palette model class;
+# 7. call either the training loop or the test loop.
+#
+# For the FMI inpainting experiments, the relevant configuration is:
+# config/inpainting_fmi16_debug.json
+# which selects FMIInpaintDataset and a reduced debug version of the
+# Palette inpainting pipeline.
+
 def main_worker(gpu, ngpus_per_node, opt):
-    """  threads running on each GPU """
+    """
+    Main execution function for one training/testing process.
+
+    In single-GPU or CPU mode, this function is called once.
+    In distributed mode, one process is spawned per GPU.
+
+    The function receives the already parsed configuration dictionary `opt`,
+    creates the complete experiment pipeline, and starts either training or
+    testing depending on opt["phase"].
+    """
     if 'local_rank' not in opt:
         opt['local_rank'] = opt['global_rank'] = gpu
     if opt['distributed']:

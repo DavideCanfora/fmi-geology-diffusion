@@ -10,9 +10,28 @@ import torch.nn as nn
 import core.util as Util
 CustomResult = collections.namedtuple('CustomResult', 'name result')
 
+# Generic model base class.
+#
+# This file provides the experiment-level training infrastructure shared by
+# model wrappers such as Palette:
+# - epoch/iteration loop;
+# - checkpoint saving/loading;
+# - validation scheduling;
+# - optimizer/scheduler state management;
+# - common device handling.
+#
+# The diffusion-specific training step is not implemented here. It is provided
+# by models/model.py through the Palette subclass.
+
 class BaseModel():
     def __init__(self, opt, phase_loader, val_loader, metrics, logger, writer):
-        """ init model with basic input, which are from __init__(**kwargs) function in inherited class """
+        """
+        Initialize common experiment state.
+
+        Subclasses receive the parsed configuration, dataloaders, metrics,
+        logger and writer. BaseModel stores these objects and provides generic
+        utilities for training loops, checkpointing and resume logic.
+        """
         self.opt = opt
         self.phase = opt['phase']
         self.set_device = partial(Util.set_device, rank=opt['global_rank'])
@@ -36,6 +55,16 @@ class BaseModel():
         self.results_dict = CustomResult([],[]) # {"name":[], "result":[]}
 
     def train(self):
+        """
+        Generic epoch-level training loop.
+
+        The subclass implements train_step() and val_step(). BaseModel only
+        controls when these methods are called, when checkpoints are saved and
+        when validation is performed.
+
+        Note: the current loop uses <= in the stopping condition, so a setting
+        such as n_epoch=1 can execute two epochs starting from epoch=0.
+        """
         while self.epoch <= self.opt['train']['n_epoch'] and self.iter <= self.opt['train']['n_iter']:
             self.epoch += 1
             if self.opt['distributed']:
@@ -93,7 +122,12 @@ class BaseModel():
         self.logger.info(s)
 
     def save_network(self, network, network_label):
-        """ save network structure, only work on GPU 0 """
+        """
+        Save network weights to the experiment checkpoint directory.
+
+        The filename format is:
+            <epoch>_<network_label>.pth
+        """
         if self.opt['global_rank'] !=0:
             return
         save_filename = '{}_{}.pth'.format(self.epoch, network_label)
@@ -136,7 +170,18 @@ class BaseModel():
         torch.save(state, save_path)
 
     def resume_training(self):
-        """ resume the optimizers and schedulers for training, only work when phase is test or resume training enable """
+        """
+        Resume optimizer, scheduler, epoch and iteration state from a checkpoint.
+
+        The config field path.resume_state should point to the checkpoint prefix
+        without extension, for example:
+            experiments/.../checkpoint/100
+
+        The method then loads:
+            100.state
+        while load_network() loads:
+            100_Network.pth
+        """
         if self.phase!='train' or self. opt['path']['resume_state'] is None:
             return
         self.logger.info('Beign loading training states'.format())

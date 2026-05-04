@@ -9,9 +9,24 @@ from types  import FunctionType
 import shutil
 def init_obj(opt, logger, *args, default_file_name='default file', given_module=None, init_type='Network', **modify_kwargs):
     """
-    finds a function handle with the name given as 'name' in config,
-    and returns the instance initialized with corresponding args.
-    """ 
+    Dynamically instantiate a class or function specified in the configuration.
+
+    The repository is configuration-driven: datasets, networks, models,
+    losses and metrics are not hard-coded in run.py. Instead, each component
+    is described in the JSON config by a "name" field and optional "args".
+
+    Examples:
+        {"name": ["data.dataset", "FMIInpaintDataset"], "args": {...}}
+        imports data.dataset.FMIInpaintDataset and initializes it.
+
+        "mse_loss"
+        is converted to {"name": "mse_loss"} and resolved from the default
+        module passed by the caller.
+
+    This mechanism is central for adapting Palette to FMI images, because new
+    datasets, losses or model variants can be added in Python files and then
+    selected directly from the config.
+    """
     if opt is None or len(opt)<1:
         logger.info('Option is None when initialize {}'.format(init_type))
         return None
@@ -95,6 +110,23 @@ def dict2str(opt, indent_l=1):
     return msg
 
 def parse(args):
+    """
+    Parse command-line arguments and the JSON configuration into the final
+    experiment dictionary `opt`.
+
+    Main responsibilities:
+    1. read the JSON config while stripping // comments;
+    2. inject command-line options such as phase, GPU ids and batch size;
+    3. decide whether distributed training is enabled;
+    4. build a timestamped experiment directory;
+    5. save the resolved config inside the experiment folder;
+    6. convert relative output paths into experiment-specific paths;
+    7. apply debug overrides when -d is used;
+    8. backup the current code into the experiment directory.
+
+    The returned `opt` object controls the entire pipeline: dataset creation,
+    network construction, loss selection, training loop and output paths.
+    """
     json_str = ''
     with open(args.config, 'r') as f:
         for line in f:

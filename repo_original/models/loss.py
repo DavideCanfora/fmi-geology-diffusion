@@ -3,6 +3,16 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 
+# Loss functions used by the Palette training wrapper.
+#
+# In the current Palette diffusion pipeline, mse_loss is applied inside
+# models/network.py to compare the true Gaussian noise with the noise predicted
+# by the UNet. For inpainting, this denoising loss is restricted to the masked
+# region.
+#
+# Future FMI-specific losses should be added here only after selecting the
+# corresponding formulation from borehole-image completion literature.
+
 # class mse_loss(nn.Module):
 #     def __init__(self) -> None:
 #         super().__init__()
@@ -12,6 +22,12 @@ from torch.autograd import Variable
 
 
 def mse_loss(output, target):
+    """
+    Mean squared error loss.
+
+    In the diffusion training code, output and target correspond to predicted
+    and true noise, not directly to reconstructed and target images.
+    """
     return F.mse_loss(output, target)
 
     

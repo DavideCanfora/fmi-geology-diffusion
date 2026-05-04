@@ -5,6 +5,17 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw
 
+# Mask-generation utilities used by the original Palette datasets.
+#
+# These functions generate generic image-inpainting masks such as rectangular
+# masks, free-form brush masks, irregular masks and uncropping masks.
+# They were designed for natural-image inpainting tasks and are not
+# FMI-specific.
+#
+# For the current FMI debug pipeline, these masks are still used as artificial
+# masks, but FMIInpaintDataset restricts them to valid non-black regions.
+# Future FMI-specific work should replace or extend these functions with
+# vertical, gap-like masks inspired by borehole-image completion literature.
 
 def random_cropping_bbox(img_shape=(256,256), mask_mode='onedirection'):
     h, w = img_shape

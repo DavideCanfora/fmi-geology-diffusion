@@ -5,6 +5,19 @@ import torch
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torchvision.utils import make_grid
 
+# General utility functions.
+#
+# This file handles:
+# - tensor-to-image conversion for result export;
+# - postprocessing before saving images;
+# - random seed configuration;
+# - device placement for CPU, CUDA and distributed training.
+#
+# The original Palette code assumed CUDA was always available. For local Mac
+# debugging, set_device() was adapted so that tensors/models stay on CPU when
+# torch.cuda.is_available() is False. On AMD/ROCm systems, PyTorch may still
+# expose the GPU through the torch.cuda API, so server setup must be verified
+# explicitly before training.
 
 def tensor2img(tensor, out_type=np.uint8, min_max=(-1, 1)):
     '''
@@ -62,15 +75,24 @@ def set_gpu(args, distributed=False, rank=0):
 		return args.cuda()
 		
 def set_device(args, distributed=False, rank=0):
-	""" set parameter to gpu or cpu """
-	if torch.cuda.is_available():
-		if isinstance(args, list):
-			return (set_gpu(item, distributed, rank) for item in args)
-		elif isinstance(args, dict):
-			return {key:set_gpu(args[key], distributed, rank) for key in args}
-		else:
-			args = set_gpu(args, distributed, rank)
-	return args
+    """
+    Move tensors or modules to the available compute device.
+
+    If torch.cuda.is_available() is True, the object is moved to GPU using
+    the torch.cuda API. This also covers many AMD/ROCm PyTorch builds,
+    where ROCm devices are exposed through torch.cuda.
+
+    If no CUDA/ROCm-compatible device is available, the object is left on
+    CPU. This allows local smoke tests on Mac CPU.
+    """
+    if torch.cuda.is_available():
+        if isinstance(args, list):
+            return [set_gpu(item, distributed, rank) for item in args]
+        elif isinstance(args, dict):
+            return {key: set_gpu(args[key], distributed, rank) for key in args}
+        else:
+            args = set_gpu(args, distributed, rank)
+    return args
 
 
 
