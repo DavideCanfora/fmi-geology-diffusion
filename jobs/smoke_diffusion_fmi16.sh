@@ -8,6 +8,9 @@
 
 set -euo pipefail
 
+mkdir -p /work/u10767535/logs/fmi_geology_diffusion
+exec > /work/u10767535/logs/fmi_geology_diffusion/smoke_diffusion_fmi16.manual.out 2> /work/u10767535/logs/fmi_geology_diffusion/smoke_diffusion_fmi16.manual.err
+
 echo "JOB_ID=$PBS_JOBID"
 echo "HOSTNAME=$(hostname)"
 echo "DATE=$(date)"
