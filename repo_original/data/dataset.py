@@ -291,3 +291,124 @@ class FMIInpaintDataset(InpaintDataset):
         ret['valid_region'] = valid_region
         ret['path'] = path.rsplit("/")[-1].rsplit("\\")[-1]
         return ret
+
+
+
+class FMIRealGapDataset(FMIInpaintDataset):
+    """
+    FMI dataset for real-gap inference.
+
+    This class identifies real missing FMI bands from the input image itself.
+
+    Real FMI gaps are treated as vertically structured black bands, not as
+    arbitrary isolated black pixels. The mask combines:
+    1. large vertical blank strips;
+    2. thinner vertical black strips.
+
+    Convention used by Palette:
+        mask = 1 means hole / region to generate
+        mask = 0 means observed context / region to preserve
+
+    The original incomplete FMI image is used as gt_image only because the
+    current Palette restoration API expects y_0 for clamping observed pixels.
+    It is not a true complete ground truth.
+    """
+
+    def __init__(
+        self,
+        data_root,
+        mask_config={},
+        data_len=-1,
+        image_size=[256, 256],
+        black_threshold=-0.95,
+        column_black_ratio=0.90,
+        thin_column_black_ratio=0.35,
+        horizontal_dilation=1,
+        loader=pil_loader
+    ):
+        super().__init__(
+            data_root=data_root,
+            mask_config=mask_config,
+            data_len=data_len,
+            image_size=image_size,
+            black_threshold=black_threshold,
+            loader=loader
+        )
+        self.column_black_ratio = column_black_ratio
+        self.thin_column_black_ratio = thin_column_black_ratio
+        self.horizontal_dilation = horizontal_dilation
+
+    def get_black_pixel_map(self, img):
+        """
+        Detect nearly black pixels.
+
+        img is normalized in [-1, 1], shape [3, H, W].
+        A pixel is black only if all RGB channels are below black_threshold.
+        """
+        return (img <= self.black_threshold).all(dim=0, keepdim=True).float()
+
+    def horizontal_dilate_mask(self, mask):
+        """
+        Slightly expand vertical gaps horizontally.
+
+        This helps include very thin black bands and their immediate borders
+        without turning isolated dark geological pixels into large holes.
+        """
+        if self.horizontal_dilation <= 0:
+            return mask
+
+        kernel_size = 2 * self.horizontal_dilation + 1
+        mask_bchw = mask.unsqueeze(0)
+        dilated = torch.nn.functional.max_pool2d(
+            mask_bchw,
+            kernel_size=(1, kernel_size),
+            stride=1,
+            padding=(0, self.horizontal_dilation)
+        )
+        return dilated.squeeze(0)
+
+    def get_real_gap_mask(self, img):
+        """
+        Detect real FMI gaps as vertically structured black bands.
+
+        Large gaps are columns that are almost fully black.
+        Thin gaps are columns that have a meaningful vertical concentration of
+        black pixels, then are slightly dilated horizontally.
+        """
+        black_pixels = self.get_black_pixel_map(img)
+
+        # black_pixels: [1, H, W]
+        # column_black_fraction: [1, 1, W]
+        column_black_fraction = black_pixels.mean(dim=1, keepdim=True)
+
+        large_gap_columns = (column_black_fraction >= self.column_black_ratio).float()
+        thin_gap_columns = (column_black_fraction >= self.thin_column_black_ratio).float()
+
+        large_gap_mask = black_pixels * large_gap_columns
+        thin_gap_mask = black_pixels * thin_gap_columns
+
+        real_gap_mask = torch.maximum(large_gap_mask, thin_gap_mask)
+        real_gap_mask = self.horizontal_dilate_mask(real_gap_mask)
+        real_gap_mask = real_gap_mask.clamp(0.0, 1.0)
+
+        return real_gap_mask
+
+    def __getitem__(self, index):
+        ret = {}
+        path = self.imgs[index]
+
+        img = self.tfs(self.loader(path))
+
+        real_gap_mask = self.get_real_gap_mask(img)
+        valid_region = 1.0 - real_gap_mask
+
+        cond_image = img * (1.0 - real_gap_mask) + real_gap_mask * torch.randn_like(img)
+        mask_img = img * (1.0 - real_gap_mask) + real_gap_mask
+
+        ret['gt_image'] = img
+        ret['cond_image'] = cond_image
+        ret['mask_image'] = mask_img
+        ret['mask'] = real_gap_mask
+        ret['valid_region'] = valid_region
+        ret['path'] = path.rsplit("/")[-1].rsplit("\\")[-1]
+        return ret
