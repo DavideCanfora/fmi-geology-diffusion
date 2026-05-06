@@ -53,6 +53,8 @@ class Palette(BaseModel):
 
         ''' networks, dataloder, optimizers, losses, etc. '''
         self.loss_fn = losses[0]
+        self.sample_num = sample_num
+        self.task = task
         self.netG = networks[0]
         if ema_scheduler is not None:
             self.ema_scheduler = ema_scheduler
@@ -86,8 +88,6 @@ class Palette(BaseModel):
         self.val_metrics = LogTracker(*metric_names, phase='val')
         self.test_metrics = LogTracker(*metric_names, phase='test')
 
-        self.sample_num = sample_num
-        self.task = task
         
     def set_input(self, data):
         """
