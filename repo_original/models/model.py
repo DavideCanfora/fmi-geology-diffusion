@@ -80,8 +80,11 @@ class Palette(BaseModel):
 
         ''' can rewrite in inherited class for more informations logging '''
         self.train_metrics = LogTracker(*[m.__name__ for m in losses], phase='train')
-        self.val_metrics = LogTracker(*[m.__name__ for m in self.metrics], phase='val')
-        self.test_metrics = LogTracker(*[m.__name__ for m in self.metrics], phase='test')
+        metric_names = [m.__name__ for m in self.metrics]
+        if self.task in ['inpainting', 'uncropping']:
+            metric_names = metric_names + ['masked_mae']
+        self.val_metrics = LogTracker(*metric_names, phase='val')
+        self.test_metrics = LogTracker(*metric_names, phase='test')
 
         self.sample_num = sample_num
         self.task = task
@@ -123,6 +126,20 @@ class Palette(BaseModel):
                 'output': (self.output.detach()[:].float().cpu()+1)/2
             })
         return dict
+
+    def compute_masked_mae(self):
+        """
+        Compute MAE only inside the inpainting mask.
+
+        This is more informative than full-image MAE for FMI inpainting,
+        because the target region is the deliberately hidden valid area.
+        The mask has shape [B, 1, H, W] and is broadcast over RGB channels.
+        """
+        eps = 1e-8
+        diff = (self.gt_image - self.output).abs()
+        masked_diff = diff * self.mask
+        denom = self.mask.sum() * diff.shape[1] + eps
+        return masked_diff.sum() / denom
 
     def save_current_results(self):
         ret_path = []
@@ -219,6 +236,12 @@ class Palette(BaseModel):
                     value = met(self.gt_image, self.output)
                     self.val_metrics.update(key, value)
                     self.writer.add_scalar(key, value)
+
+                if self.task in ['inpainting', 'uncropping'] and self.mask is not None:
+                    masked_mae = self.compute_masked_mae()
+                    self.val_metrics.update('masked_mae', masked_mae.item())
+                    self.writer.add_scalar('masked_mae', masked_mae.item())
+
                 for key, value in self.get_current_visuals(phase='val').items():
                     self.writer.add_images(key, value)
                 self.writer.save_images(self.save_current_results())
@@ -257,6 +280,12 @@ class Palette(BaseModel):
                     value = met(self.gt_image, self.output)
                     self.test_metrics.update(key, value)
                     self.writer.add_scalar(key, value)
+
+                if self.task in ['inpainting', 'uncropping'] and self.mask is not None:
+                    masked_mae = self.compute_masked_mae()
+                    self.test_metrics.update('masked_mae', masked_mae.item())
+                    self.writer.add_scalar('masked_mae', masked_mae.item())
+
                 for key, value in self.get_current_visuals(phase='test').items():
                     self.writer.add_images(key, value)
                 self.writer.save_images(self.save_current_results())
