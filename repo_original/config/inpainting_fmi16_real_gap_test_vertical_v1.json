@@ -76,7 +76,7 @@
                     "unet": {
                         "in_channel": 6,
                         "out_channel": 3,
-                        "inner_channel": 32,
+                        "inner_channel": 64,
                         "channel_mults": [
                             1,
                             2,
@@ -86,14 +86,14 @@
                             16
                         ],
                         "num_head_channels": 32,
-                        "res_blocks": 1,
+                        "res_blocks": 2,
                         "dropout": 0.2,
                         "image_size": 256
                     },
                     "beta_schedule": {
                         "train": {
                             "schedule": "linear",
-                            "n_timestep": 10,
+                            "n_timestep": 100,
                             "linear_start": 1e-06,
                             "linear_end": 0.01
                         },
