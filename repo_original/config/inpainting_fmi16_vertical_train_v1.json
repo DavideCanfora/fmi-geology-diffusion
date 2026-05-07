@@ -1,0 +1,211 @@
+{
+    "name": "inpainting_fmi16_vertical_train_v1",
+    "gpu_ids": [
+        0
+    ],
+    "seed": 42,
+    "finetune_norm": false,
+    "path": {
+        "base_dir": "experiments",
+        "code": "code",
+        "tb_logger": "tb_logger",
+        "results": "results",
+        "checkpoint": "checkpoint",
+        "resume_state": null
+    },
+    "datasets": {
+        "train": {
+            "which_dataset": {
+                "name": [
+                    "data.dataset",
+                    "FMIInpaintDataset"
+                ],
+                "args": {
+                    "data_root": "/work/u10767535/datasets/utah_forge_16b78_32/dataset_fmi16_v2_color",
+                    "data_len": 6300,
+                    "image_size": [
+                        256,
+                        256
+                    ],
+                    "black_threshold": -0.95,
+                    "mask_config": {
+                        "mask_mode": "fmi_vertical",
+                        "wide_width_range": [
+                            12,
+                            40
+                        ],
+                        "thin_width_range": [
+                            1,
+                            6
+                        ],
+                        "num_wide_range": [
+                            1,
+                            3
+                        ],
+                        "num_thin_range": [
+                            2,
+                            8
+                        ],
+                        "full_height_probability": 0.85,
+                        "partial_height_range": [
+                            96,
+                            256
+                        ],
+                        "horizontal_dilation": 1,
+                        "max_area_ratio": 0.55
+                    }
+                }
+            },
+            "dataloader": {
+                "validation_split": 32,
+                "args": {
+                    "batch_size": 4,
+                    "num_workers": 4,
+                    "shuffle": true,
+                    "pin_memory": true,
+                    "drop_last": true
+                },
+                "val_args": {
+                    "batch_size": 4,
+                    "num_workers": 4,
+                    "shuffle": false,
+                    "pin_memory": true,
+                    "drop_last": false
+                }
+            }
+        },
+        "test": {
+            "which_dataset": {
+                "name": [
+                    "data.dataset",
+                    "FMIInpaintDataset"
+                ],
+                "args": {
+                    "data_root": "/work/u10767535/datasets/utah_forge_16b78_32/dataset_fmi16_v2_color",
+                    "data_len": 64,
+                    "image_size": [
+                        256,
+                        256
+                    ],
+                    "black_threshold": -0.95,
+                    "mask_config": {
+                        "mask_mode": "fmi_vertical",
+                        "wide_width_range": [
+                            12,
+                            40
+                        ],
+                        "thin_width_range": [
+                            1,
+                            6
+                        ],
+                        "num_wide_range": [
+                            1,
+                            3
+                        ],
+                        "num_thin_range": [
+                            2,
+                            8
+                        ],
+                        "full_height_probability": 0.85,
+                        "partial_height_range": [
+                            96,
+                            256
+                        ],
+                        "horizontal_dilation": 1,
+                        "max_area_ratio": 0.55
+                    }
+                }
+            },
+            "dataloader": {
+                "args": {
+                    "batch_size": 4,
+                    "num_workers": 4,
+                    "pin_memory": true,
+                    "shuffle": false
+                }
+            }
+        }
+    },
+    "model": {
+        "which_model": {
+            "name": [
+                "models.model",
+                "Palette"
+            ],
+            "args": {
+                "sample_num": 4,
+                "task": "inpainting",
+                "ema_scheduler": null,
+                "optimizers": [
+                    {
+                        "lr": 5e-05,
+                        "weight_decay": 0
+                    }
+                ]
+            }
+        },
+        "which_networks": [
+            {
+                "name": [
+                    "models.network",
+                    "Network"
+                ],
+                "args": {
+                    "init_type": "kaiming",
+                    "module_name": "guided_diffusion",
+                    "unet": {
+                        "in_channel": 6,
+                        "out_channel": 3,
+                        "inner_channel": 64,
+                        "channel_mults": [
+                            1,
+                            2,
+                            4
+                        ],
+                        "attn_res": [
+                            16
+                        ],
+                        "num_head_channels": 32,
+                        "res_blocks": 2,
+                        "dropout": 0.2,
+                        "image_size": 256
+                    },
+                    "beta_schedule": {
+                        "train": {
+                            "schedule": "linear",
+                            "n_timestep": 100,
+                            "linear_start": 1e-06,
+                            "linear_end": 0.01
+                        },
+                        "test": {
+                            "schedule": "linear",
+                            "n_timestep": 100,
+                            "linear_start": 0.0001,
+                            "linear_end": 0.09
+                        }
+                    }
+                }
+            }
+        ],
+        "which_losses": [
+            "mse_loss"
+        ],
+        "which_metrics": [
+            "mae"
+        ]
+    },
+    "train": {
+        "n_epoch": 5,
+        "n_iter": 8000,
+        "val_epoch": 1,
+        "save_checkpoint_epoch": 1,
+        "log_iter": 100,
+        "tensorboard": false
+    },
+    "debug": {
+        "val_epoch": 1,
+        "save_checkpoint_epoch": 1,
+        "log_iter": 20,
+        "debug_split": 64
+    }
+}
