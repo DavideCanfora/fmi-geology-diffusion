@@ -37,7 +37,7 @@ class EMA():
         return old * self.beta + (1 - self.beta) * new
 
 class Palette(BaseModel):
-    def __init__(self, networks, losses, sample_num, task, optimizers, ema_scheduler=None, **kwargs):
+    def __init__(self, networks, losses, sample_num, task, optimizers, ema_scheduler=None, sampling_mode='standard', repaint_jump_length=10, repaint_jump_n_sample=5, **kwargs):
         """
         Initialize the Palette training wrapper.
 
@@ -54,6 +54,9 @@ class Palette(BaseModel):
         ''' networks, dataloder, optimizers, losses, etc. '''
         self.loss_fn = losses[0]
         self.sample_num = sample_num
+        self.sampling_mode = sampling_mode
+        self.repaint_jump_length = repaint_jump_length
+        self.repaint_jump_n_sample = repaint_jump_n_sample
         self.task = task
         self.netG = networks[0]
         if ema_scheduler is not None:
