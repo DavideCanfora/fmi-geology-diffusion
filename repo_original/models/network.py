@@ -21,6 +21,54 @@ from core.base_network import BaseNetwork
 #   y_cond : masked/noisy conditional image;
 #   mask   : artificial inpainting mask restricted to valid FMI pixels.
 
+
+def get_repaint_schedule_jump(
+        t_T,
+        n_sample=1,
+        jump_length=10,
+        jump_n_sample=10,
+        start_resampling=100000000):
+    """
+    RePaint-style time-travel schedule.
+
+    Adapted from the official RePaint scheduler:
+    references/diffusion_inpainting/repaint_official/guided_diffusion/scheduler.py
+
+    Returns a list of timesteps where decreasing transitions perform normal
+    reverse denoising and increasing transitions re-noise the current sample.
+    """
+    jumps = {}
+    for j in range(0, t_T - jump_length, jump_length):
+        jumps[j] = jump_n_sample - 1
+
+    t = t_T
+    ts = []
+
+    while t >= 1:
+        t = t - 1
+        ts.append(t)
+
+        if t + 1 < t_T - 1 and t <= start_resampling:
+            for _ in range(n_sample - 1):
+                t = t + 1
+                ts.append(t)
+                if t >= 0:
+                    t = t - 1
+                    ts.append(t)
+
+        if jumps.get(t, 0) > 0 and t <= start_resampling - jump_length:
+            jumps[t] = jumps[t] - 1
+            for _ in range(jump_length):
+                t = t + 1
+                ts.append(t)
+
+    ts.append(-1)
+
+    for t_last, t_cur in zip(ts[:-1], ts[1:]):
+        assert abs(t_last - t_cur) == 1, (t_last, t_cur)
+
+    return ts
+
 class Network(BaseNetwork):
     def __init__(self, unet, beta_schedule, module_name='sr3', **kwargs):
         """
@@ -155,6 +203,75 @@ class Network(BaseNetwork):
                 y_t = y_0*(1.-mask) + mask*y_t
             if i % sample_inter == 0:
                 ret_arr = torch.cat([ret_arr, y_t], dim=0)
+        return y_t, ret_arr
+
+    @torch.no_grad()
+    def q_sample_from_to(self, y_t, t_from, t_to):
+        """
+        Re-noise y_t from timestep t_from to timestep t_to, where t_to = t_from + 1
+        in the RePaint schedule.
+        """
+        gamma_from = extract(self.gammas, t_from, y_t.shape)
+        gamma_to = extract(self.gammas, t_to, y_t.shape)
+
+        alpha = gamma_to / gamma_from
+        noise = torch.randn_like(y_t)
+
+        return alpha.sqrt() * y_t + (1.0 - alpha).sqrt() * noise
+
+    @torch.no_grad()
+    def restoration_repaint(
+            self,
+            y_cond,
+            y_t=None,
+            y_0=None,
+            mask=None,
+            sample_num=8,
+            jump_length=10,
+            jump_n_sample=5,
+            start_resampling=None):
+        """
+        RePaint-style restoration loop.
+
+        Normal decreasing steps perform reverse denoising.
+        Increasing steps re-noise the current image, then denoising is repeated.
+        Observed pixels outside the mask are clamped after each transition.
+        """
+        b, *_ = y_cond.shape
+
+        assert self.num_timesteps > sample_num, 'num_timesteps must greater than sample_num'
+        sample_inter = self.num_timesteps // sample_num
+
+        if start_resampling is None:
+            start_resampling = self.num_timesteps
+
+        y_t = default(y_t, lambda: torch.randn_like(y_cond))
+        ret_arr = y_t
+
+        times = get_repaint_schedule_jump(
+            t_T=self.num_timesteps,
+            n_sample=1,
+            jump_length=jump_length,
+            jump_n_sample=jump_n_sample,
+            start_resampling=start_resampling
+        )
+        time_pairs = list(zip(times[:-1], times[1:]))
+
+        for t_last, t_cur in tqdm(time_pairs, desc='repaint sampling loop time step', total=len(time_pairs)):
+            if t_cur < t_last:
+                t = torch.full((b,), t_last, device=y_cond.device, dtype=torch.long)
+                y_t = self.p_sample(y_t, t, y_cond=y_cond)
+            else:
+                t_from = torch.full((b,), t_last, device=y_cond.device, dtype=torch.long)
+                t_to = torch.full((b,), t_cur, device=y_cond.device, dtype=torch.long)
+                y_t = self.q_sample_from_to(y_t, t_from, t_to)
+
+            if mask is not None:
+                y_t = y_0 * (1.0 - mask) + mask * y_t
+
+            if t_cur >= 0 and t_cur % sample_inter == 0:
+                ret_arr = torch.cat([ret_arr, y_t], dim=0)
+
         return y_t, ret_arr
 
     def forward(self, y_0, y_cond=None, mask=None, noise=None):

@@ -217,14 +217,36 @@ class Palette(BaseModel):
                 self.set_input(val_data)
                 if self.opt['distributed']:
                     if self.task in ['inpainting','uncropping']:
-                        self.output, self.visuals = self.netG.module.restoration(self.cond_image, y_t=self.cond_image, 
-                            y_0=self.gt_image, mask=self.mask, sample_num=self.sample_num)
+                        self.output, self.visuals = (
+                            self.netG.module.restoration_repaint(
+                                self.cond_image, y_t=self.cond_image, y_0=self.gt_image,
+                                mask=self.mask, sample_num=self.sample_num,
+                                jump_length=self.repaint_jump_length,
+                                jump_n_sample=self.repaint_jump_n_sample
+                            )
+                            if self.sampling_mode == 'repaint'
+                            else self.netG.module.restoration(
+                                self.cond_image, y_t=self.cond_image,
+                                y_0=self.gt_image, mask=self.mask, sample_num=self.sample_num
+                            )
+                        )
                     else:
                         self.output, self.visuals = self.netG.module.restoration(self.cond_image, sample_num=self.sample_num)
                 else:
                     if self.task in ['inpainting','uncropping']:
-                        self.output, self.visuals = self.netG.restoration(self.cond_image, y_t=self.cond_image, 
-                            y_0=self.gt_image, mask=self.mask, sample_num=self.sample_num)
+                        self.output, self.visuals = (
+                            self.netG.restoration_repaint(
+                                self.cond_image, y_t=self.cond_image, y_0=self.gt_image,
+                                mask=self.mask, sample_num=self.sample_num,
+                                jump_length=self.repaint_jump_length,
+                                jump_n_sample=self.repaint_jump_n_sample
+                            )
+                            if self.sampling_mode == 'repaint'
+                            else self.netG.restoration(
+                                self.cond_image, y_t=self.cond_image,
+                                y_0=self.gt_image, mask=self.mask, sample_num=self.sample_num
+                            )
+                        )
                     else:
                         self.output, self.visuals = self.netG.restoration(self.cond_image, sample_num=self.sample_num)
                     
@@ -262,14 +284,36 @@ class Palette(BaseModel):
                 self.set_input(phase_data)
                 if self.opt['distributed']:
                     if self.task in ['inpainting','uncropping']:
-                        self.output, self.visuals = self.netG.module.restoration(self.cond_image, y_t=self.cond_image, 
-                            y_0=self.gt_image, mask=self.mask, sample_num=self.sample_num)
+                        self.output, self.visuals = (
+                            self.netG.module.restoration_repaint(
+                                self.cond_image, y_t=self.cond_image, y_0=self.gt_image,
+                                mask=self.mask, sample_num=self.sample_num,
+                                jump_length=self.repaint_jump_length,
+                                jump_n_sample=self.repaint_jump_n_sample
+                            )
+                            if self.sampling_mode == 'repaint'
+                            else self.netG.module.restoration(
+                                self.cond_image, y_t=self.cond_image,
+                                y_0=self.gt_image, mask=self.mask, sample_num=self.sample_num
+                            )
+                        )
                     else:
                         self.output, self.visuals = self.netG.module.restoration(self.cond_image, sample_num=self.sample_num)
                 else:
                     if self.task in ['inpainting','uncropping']:
-                        self.output, self.visuals = self.netG.restoration(self.cond_image, y_t=self.cond_image, 
-                            y_0=self.gt_image, mask=self.mask, sample_num=self.sample_num)
+                        self.output, self.visuals = (
+                            self.netG.restoration_repaint(
+                                self.cond_image, y_t=self.cond_image, y_0=self.gt_image,
+                                mask=self.mask, sample_num=self.sample_num,
+                                jump_length=self.repaint_jump_length,
+                                jump_n_sample=self.repaint_jump_n_sample
+                            )
+                            if self.sampling_mode == 'repaint'
+                            else self.netG.restoration(
+                                self.cond_image, y_t=self.cond_image,
+                                y_0=self.gt_image, mask=self.mask, sample_num=self.sample_num
+                            )
+                        )
                     else:
                         self.output, self.visuals = self.netG.restoration(self.cond_image, sample_num=self.sample_num)
                         
