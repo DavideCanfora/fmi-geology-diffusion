@@ -5,7 +5,7 @@ import os
 import torch
 import numpy as np
 
-from .util.mask import (bbox2mask, brush_stroke_mask, get_irregular_mask, random_bbox, random_cropping_bbox)
+from .util.mask import (bbox2mask, brush_stroke_mask, fmi_vertical_mask, get_irregular_mask, random_bbox, random_cropping_bbox)
 
 IMG_EXTENSIONS = [
     '.jpg', '.JPG', '.jpeg', '.JPEG',
@@ -105,6 +105,11 @@ class InpaintDataset(data.Dataset):
             regular_mask = bbox2mask(self.image_size, random_bbox())
             irregular_mask = brush_stroke_mask(self.image_size, )
             mask = regular_mask | irregular_mask
+        elif self.mask_mode == 'fmi_vertical':
+            mask = fmi_vertical_mask(self.image_size, **{
+                k: v for k, v in self.mask_config.items()
+                if k != 'mask_mode'
+            })
         elif self.mask_mode == 'file':
             pass
         else:

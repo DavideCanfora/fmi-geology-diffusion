@@ -347,3 +347,59 @@ def get_irregular_mask(img_shape, area_ratio_range=(0.15, 0.5), **kwargs):
         mask = random_irregular_mask(img_shape, **kwargs)
 
     return mask
+
+
+def fmi_vertical_mask(
+        img_shape,
+        wide_width_range=(12, 40),
+        thin_width_range=(1, 6),
+        num_wide_range=(1, 3),
+        num_thin_range=(2, 8),
+        full_height_probability=0.85,
+        partial_height_range=(96, 256),
+        horizontal_dilation=1,
+        max_area_ratio=0.55,
+        dtype='uint8'):
+    """Generate FMI-like vertical acquisition-gap masks.
+
+    The returned mask has shape (H, W, 1), with 1 indicating the artificial
+    hole to be reconstructed.
+    """
+    h, w = img_shape[:2]
+    mask = np.zeros((h, w), dtype=dtype)
+
+    def _randint_range(rng):
+        lo, hi = rng
+        return int(np.random.randint(lo, hi + 1))
+
+    def _draw_strip(width):
+        width = max(1, min(width, w))
+        left = int(np.random.randint(0, max(1, w - width + 1)))
+
+        if np.random.rand() < full_height_probability:
+            top = 0
+            height = h
+        else:
+            height = _randint_range(partial_height_range)
+            height = max(1, min(height, h))
+            top = int(np.random.randint(0, max(1, h - height + 1)))
+
+        mask[top:top + height, left:left + width] = 1
+
+    for _ in range(_randint_range(num_wide_range)):
+        _draw_strip(_randint_range(wide_width_range))
+
+    for _ in range(_randint_range(num_thin_range)):
+        _draw_strip(_randint_range(thin_width_range))
+
+    if horizontal_dilation > 0:
+        kernel = np.ones((1, 2 * horizontal_dilation + 1), dtype=np.uint8)
+        mask = cv2.dilate(mask.astype(np.uint8), kernel, iterations=1).astype(dtype)
+
+    if mask.mean() > max_area_ratio:
+        mask = np.zeros((h, w), dtype=dtype)
+        width = min(w, max(1, _randint_range(wide_width_range)))
+        left = int(np.random.randint(0, max(1, w - width + 1)))
+        mask[:, left:left + width] = 1
+
+    return mask[:, :, None].astype(dtype)
