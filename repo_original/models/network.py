@@ -144,13 +144,19 @@ class Network(BaseNetwork):
         posterior_log_variance_clipped = extract(self.posterior_log_variance_clipped, t, y_t.shape)
         return posterior_mean, posterior_log_variance_clipped
 
-    def p_mean_variance(self, y_t, t, clip_denoised: bool, y_cond=None):
+    def p_mean_variance(self, y_t, t, clip_denoised: bool, y_cond=None, y_0=None, mask=None):
         noise_level = extract(self.gammas, t, x_shape=(1, 1)).to(y_t.device)
         y_0_hat = self.predict_start_from_noise(
                 y_t, t=t, noise=self.denoise_fn(torch.cat([y_cond, y_t], dim=1), noise_level))
 
         if clip_denoised:
             y_0_hat.clamp_(-1., 1.)
+
+        # Data consistency for inpainting:
+        # force the predicted clean image to agree with observed pixels before
+        # computing q(y_{t-1} | y_t, y_0_hat), not only after sampling.
+        if mask is not None and y_0 is not None:
+            y_0_hat = y_0 * (1.0 - mask) + y_0_hat * mask
 
         model_mean, posterior_log_variance = self.q_posterior(
             y_0_hat=y_0_hat, y_t=y_t, t=t)
@@ -170,9 +176,10 @@ class Network(BaseNetwork):
         )
 
     @torch.no_grad()
-    def p_sample(self, y_t, t, clip_denoised=True, y_cond=None):
+    def p_sample(self, y_t, t, clip_denoised=True, y_cond=None, y_0=None, mask=None):
         model_mean, model_log_variance = self.p_mean_variance(
-            y_t=y_t, t=t, clip_denoised=clip_denoised, y_cond=y_cond)
+            y_t=y_t, t=t, clip_denoised=clip_denoised,
+            y_cond=y_cond, y_0=y_0, mask=mask)
         noise = torch.randn_like(y_t) if any(t>0) else torch.zeros_like(y_t)
         return model_mean + noise * (0.5 * model_log_variance).exp()
 
@@ -198,7 +205,7 @@ class Network(BaseNetwork):
         ret_arr = y_t
         for i in tqdm(reversed(range(0, self.num_timesteps)), desc='sampling loop time step', total=self.num_timesteps):
             t = torch.full((b,), i, device=y_cond.device, dtype=torch.long)
-            y_t = self.p_sample(y_t, t, y_cond=y_cond)
+            y_t = self.p_sample(y_t, t, y_cond=y_cond, y_0=y_0, mask=mask)
             if mask is not None:
                 y_t = y_0*(1.-mask) + mask*y_t
             if i % sample_inter == 0:
@@ -260,7 +267,7 @@ class Network(BaseNetwork):
         for t_last, t_cur in tqdm(time_pairs, desc='repaint sampling loop time step', total=len(time_pairs)):
             if t_cur < t_last:
                 t = torch.full((b,), t_last, device=y_cond.device, dtype=torch.long)
-                y_t = self.p_sample(y_t, t, y_cond=y_cond)
+                y_t = self.p_sample(y_t, t, y_cond=y_cond, y_0=y_0, mask=mask)
             else:
                 t_from = torch.full((b,), t_last, device=y_cond.device, dtype=torch.long)
                 t_to = torch.full((b,), t_cur, device=y_cond.device, dtype=torch.long)
