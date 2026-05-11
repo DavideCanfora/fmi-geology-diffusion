@@ -281,22 +281,49 @@ class Network(BaseNetwork):
 
         return y_t, ret_arr
 
+    def masked_l1_loss(self, pred, target, mask, eps=1e-8):
+        """
+        Mean absolute reconstruction error restricted to the inpainting mask.
+        The mask has shape [B, 1, H, W] and is broadcast over RGB channels.
+        """
+        diff = (pred - target).abs() * mask
+        denom = mask.sum() * pred.shape[1] + eps
+        return diff.sum() / denom
+
+    def masked_gradient_l1_loss(self, pred, target, mask, eps=1e-8):
+        """
+        Gradient consistency loss restricted to the inpainting mask.
+
+        Vertical gradients encourage continuity along borehole depth.
+        Horizontal gradients encourage lateral consistency across the gap.
+        """
+        pred_dy = pred[:, :, 1:, :] - pred[:, :, :-1, :]
+        target_dy = target[:, :, 1:, :] - target[:, :, :-1, :]
+        mask_dy = mask[:, :, 1:, :] * mask[:, :, :-1, :]
+
+        pred_dx = pred[:, :, :, 1:] - pred[:, :, :, :-1]
+        target_dx = target[:, :, :, 1:] - target[:, :, :, :-1]
+        mask_dx = mask[:, :, :, 1:] * mask[:, :, :, :-1]
+
+        dy_loss = ((pred_dy - target_dy).abs() * mask_dy).sum()
+        dx_loss = ((pred_dx - target_dx).abs() * mask_dx).sum()
+
+        dy_denom = mask_dy.sum() * pred.shape[1] + eps
+        dx_denom = mask_dx.sum() * pred.shape[1] + eps
+
+        return dy_loss / dy_denom + dx_loss / dx_denom
+
     def forward(self, y_0, y_cond=None, mask=None, noise=None):
         """
         Compute one diffusion training loss.
 
-        A random timestep/noise level is sampled for each image. The clean
-        target y_0 is noised to obtain y_noisy. The UNet receives the
-        conditional image y_cond concatenated with the noisy target.
+        The base objective remains Palette's masked noise-prediction MSE.
+        For FMI inpainting, two image-space regularizers are added:
+        1. masked L1 reconstruction loss on y_0_hat;
+        2. masked gradient L1 loss on y_0_hat.
 
-        For inpainting, the noisy target is used only inside the artificial
-        mask, while the clean target is kept outside the mask. The loss is the
-        denoising loss between true noise and predicted noise, restricted to
-        the masked region.
-
-        This is the key self-supervised mechanism used by the current FMI
-        debug pipeline: known valid pixels are deliberately hidden, corrupted
-        with noise, and reconstructed by predicting the injected noise.
+        These terms are applied only during training and require no architecture
+        change.
         """
         # sampling from p(gammas)
         b, *_ = y_0.shape
@@ -311,11 +338,22 @@ class Network(BaseNetwork):
             y_0=y_0, sample_gammas=sample_gammas.view(-1, 1, 1, 1), noise=noise)
 
         if mask is not None:
-            noise_hat = self.denoise_fn(torch.cat([y_cond, y_noisy*mask+(1.-mask)*y_0], dim=1), sample_gammas)
-            loss = self.loss_fn(mask*noise, mask*noise_hat)
+            y_noisy_input = y_noisy * mask + (1.0 - mask) * y_0
+            noise_hat = self.denoise_fn(torch.cat([y_cond, y_noisy_input], dim=1), sample_gammas)
+
+            noise_loss = self.loss_fn(mask * noise, mask * noise_hat)
+
+            y_0_hat = self.predict_start_from_noise(y_noisy, t=t, noise=noise_hat)
+            y_0_hat = y_0_hat.clamp(-1.0, 1.0)
+
+            rec_l1_loss = self.masked_l1_loss(y_0_hat, y_0, mask)
+            grad_l1_loss = self.masked_gradient_l1_loss(y_0_hat, y_0, mask)
+
+            loss = noise_loss + 0.5 * rec_l1_loss + 0.1 * grad_l1_loss
         else:
             noise_hat = self.denoise_fn(torch.cat([y_cond, y_noisy], dim=1), sample_gammas)
             loss = self.loss_fn(noise, noise_hat)
+
         return loss
 
 
