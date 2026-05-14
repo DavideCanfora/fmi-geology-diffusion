@@ -27,7 +27,7 @@ def make_dataset(dir):
     patches extracted from DLIS files.
     """
     if os.path.isfile(dir):
-        images = [i for i in np.genfromtxt(dir, dtype=np.str, encoding='utf-8')]
+        images = [i for i in np.genfromtxt(dir, dtype=str, encoding='utf-8')]
     else:
         images = []
         assert os.path.isdir(dir), '%s is not a valid directory' % dir
@@ -213,19 +213,9 @@ class FMIInpaintDataset(InpaintDataset):
     vertical bands caused by incomplete pad coverage or invalid measurements.
     These real gaps should not be treated as artificial training targets.
 
-    This dataset extends the generic InpaintDataset by:
-    1. detecting the valid FMI support region from non-black pixels;
-    2. generating a standard artificial inpainting mask;
-    3. intersecting the artificial mask with the valid support region;
-    4. producing a conditional image only where valid pixels were deliberately
-       hidden.
-
-    In this way, the model is trained to reconstruct deliberately removed FMI
-    information, not regions where the original acquisition already contains no
-    signal.
-
-    Additional returned field:
-        valid_region : binary map of non-black FMI support pixels.
+    For FMI vertical artificial masks, the mask is sampled as a full vertical
+    structure and accepted only if it avoids real-gap columns and falls almost
+    entirely on valid FMI signal. This prevents dirty/interrupted white masks.
     """
 
     def __init__(
@@ -235,6 +225,9 @@ class FMIInpaintDataset(InpaintDataset):
         data_len=-1,
         image_size=[256, 256],
         black_threshold=-0.95,
+        min_distance_from_real_gap=4,
+        min_valid_fraction_for_artificial_mask=0.995,
+        max_mask_resample_tries=50,
         loader=pil_loader
     ):
         super().__init__(
@@ -245,6 +238,9 @@ class FMIInpaintDataset(InpaintDataset):
             loader=loader
         )
         self.black_threshold = black_threshold
+        self.min_distance_from_real_gap = int(min_distance_from_real_gap)
+        self.min_valid_fraction_for_artificial_mask = float(min_valid_fraction_for_artificial_mask)
+        self.max_mask_resample_tries = int(max_mask_resample_tries)
 
     def get_valid_region(self, img):
         """
@@ -258,11 +254,70 @@ class FMIInpaintDataset(InpaintDataset):
             Tensor of shape [1, H, W], with 1 for valid FMI pixels and 0 for
             already-missing regions.
         """
-        # img is normalized in [-1, 1], shape [3, H, W]
-        # black FMI gaps are close to -1 in all RGB channels.
-        # valid_region shape: [1, H, W], values 0/1.
         valid = (img > self.black_threshold).any(dim=0, keepdim=True).float()
         return valid
+
+    def get_forbidden_real_gap_columns(self, valid_region):
+        """
+        Detect columns containing real missing FMI pixels and dilate them
+        horizontally. Artificial vertical masks must not touch these columns.
+        """
+        valid_one = valid_region[:1]
+        real_missing_columns = (valid_one.mean(dim=1, keepdim=True) < 0.999).float()
+
+        if self.min_distance_from_real_gap <= 0:
+            return real_missing_columns
+
+        kernel_size = 2 * self.min_distance_from_real_gap + 1
+        forbidden = torch.nn.functional.max_pool2d(
+            real_missing_columns.unsqueeze(0),
+            kernel_size=(1, kernel_size),
+            stride=1,
+            padding=(0, self.min_distance_from_real_gap)
+        ).squeeze(0)
+
+        return forbidden.clamp(0.0, 1.0)
+
+    def sample_valid_artificial_mask(self, valid_region):
+        """
+        For FMI vertical masks, sample full vertical bands that avoid real-gap
+        columns and fall almost entirely on valid FMI signal.
+
+        The accepted vertical mask is kept full. It is not multiplied pixelwise
+        by valid_region, because that creates dirty/interrupted masks.
+        """
+        if self.mask_mode != 'fmi_vertical':
+            raw_mask = self.get_mask().float()
+            return raw_mask * valid_region
+
+        forbidden_columns = self.get_forbidden_real_gap_columns(valid_region)
+
+        best_mask = None
+        best_score = -1.0
+
+        for _ in range(self.max_mask_resample_tries):
+            raw_mask = self.get_mask().float()
+            mask_one = raw_mask[:1]
+
+            mask_area = float(mask_one.sum().item())
+            if mask_area <= 0:
+                continue
+
+            forbidden_overlap = float((mask_one * forbidden_columns).sum().item())
+            valid_fraction = float((mask_one * valid_region[:1]).sum().item() / (mask_area + 1e-8))
+            score = valid_fraction - 10.0 * (forbidden_overlap / (mask_area + 1e-8))
+
+            if score > best_score:
+                best_score = score
+                best_mask = raw_mask
+
+            if forbidden_overlap == 0.0 and valid_fraction >= self.min_valid_fraction_for_artificial_mask:
+                return raw_mask
+
+        if best_mask is not None:
+            return best_mask
+
+        return self.get_mask().float() * valid_region
 
     def __getitem__(self, index):
         ret = {}
@@ -270,20 +325,12 @@ class FMIInpaintDataset(InpaintDataset):
 
         img = self.tfs(self.loader(path))
 
-        raw_mask = self.get_mask().float()
         valid_region = self.get_valid_region(img)
+        mask = self.sample_valid_artificial_mask(valid_region)
 
-        # Restrict artificial holes to valid FMI pixels. Real black bands
-        # remain visible as missing acquisition regions and are not used as
-        # artificial reconstruction targets.
-        # final mask: only mask valid FMI pixels, never already-black gaps
-        mask = raw_mask * valid_region
-
-        # if the mask accidentally becomes almost empty, retry a few times
         tries = 0
         while mask.mean() < 0.01 and tries < 10:
-            raw_mask = self.get_mask().float()
-            mask = raw_mask * valid_region
+            mask = self.sample_valid_artificial_mask(valid_region)
             tries += 1
 
         cond_image = img * (1. - mask) + mask * torch.randn_like(img)
