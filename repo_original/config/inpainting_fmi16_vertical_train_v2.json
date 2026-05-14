@@ -21,8 +21,8 @@
                     "FMIInpaintDataset"
                 ],
                 "args": {
-                    "data_root": "/work/u10767535/datasets/utah_forge_16b78_32/dataset_fmi16_v2_color",
-                    "data_len": 6300,
+                    "data_root": "/work/u10767535/datasets/utah_forge_16b78_32/dataset_fmi16_v2_color_clean_v3",
+                    "data_len": -1,
                     "image_size": [
                         256,
                         256
@@ -81,7 +81,7 @@
                     "FMIInpaintDataset"
                 ],
                 "args": {
-                    "data_root": "/work/u10767535/datasets/utah_forge_16b78_32/dataset_fmi16_v2_color",
+                    "data_root": "/work/u10767535/datasets/utah_forge_16b78_32/dataset_fmi16_v2_color_clean_v3",
                     "data_len": 64,
                     "image_size": [
                         256,
